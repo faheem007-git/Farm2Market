@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.agripulse.backend.SupplierResponseApiTest
 -------------------------------------------------------------------------------
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.224 s -- in com.agripulse.backend.SupplierResponseApiTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.066 s -- in com.agripulse.backend.SupplierResponseApiTest
