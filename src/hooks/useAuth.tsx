@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { authService } from "../services/authService";
+import { isApiEnabled } from "../services/apiClient";
 import type { Role, User } from "../types";
 
 interface AuthContextValue {
@@ -25,6 +26,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     authService.logout();
     setUser(null);
+  }, []);
+
+  // API mode only: revalidate a restored session against the backend once.
+  // An expired/revoked token drops the session instead of failing later.
+  useEffect(() => {
+    if (!isApiEnabled()) return;
+    if (!authService.getSession()) return;
+    let live = true;
+    authService
+      .me()
+      .then((fresh) => {
+        if (live) setUser(fresh);
+      })
+      .catch(() => {
+        if (live) {
+          authService.logout();
+          setUser(null);
+        }
+      });
+    return () => {
+      live = false;
+    };
   }, []);
 
   const value = useMemo<AuthContextValue>(

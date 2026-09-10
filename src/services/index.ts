@@ -1,7 +1,8 @@
 import { DEMO_ORDERS, DEMO_PRODUCE, DEMO_REQUIREMENTS } from "../data/demoData";
-import type { AppNotification, Conversation, Message, Order, Produce, Requirement, Role } from "../types";
+import type { AppNotification, Conversation, Match, Message, Order, Produce, Requirement, Role } from "../types";
 import { distanceKm } from "../utils/marketplace";
 import { factorReasons, scoreFactors, weightedScore } from "../utils/matching";
+import { ApiError, apiFetch, isApiEnabled } from "./apiClient";
 
 // REST-ready abstractions backed by demo data (+ localStorage for buyer-created
 // requirements). Pages must use these services / the useRequirements hook —
@@ -108,6 +109,7 @@ export function getAllProduce(): Produce[] {
 
 export const produceService = {
   async listProduce(): Promise<Produce[]> {
+    if (isApiEnabled()) return apiFetch<Produce[]>("/api/produce");
     return getAllProduce();
   },
 
@@ -116,6 +118,25 @@ export const produceService = {
     supplierName: string,
     input: ProduceInput
   ): Promise<Produce> {
+    if (isApiEnabled()) {
+      return apiFetch<Produce>("/api/produce", {
+        method: "POST",
+        body: {
+          name: input.name,
+          variety: input.variety,
+          category: input.category,
+          grade: input.grade,
+          quantityKg: input.quantityKg,
+          unit: input.unit,
+          pricePerKg: input.pricePerKg,
+          location: input.location,
+          harvestDate: input.availableFrom,
+          availableFrom: input.availableFrom,
+          availableUntil: input.availableUntil,
+          description: input.description,
+        },
+      });
+    }
     const emoji =
       input.name === "Onions" ? "🧅" : input.name === "Green Chillies" ? "🌶️" : "🍅";
     const created: Produce = {
@@ -151,6 +172,17 @@ export const produceService = {
     id: string,
     patch: Partial<Produce>
   ): Promise<Produce | null> {
+    if (isApiEnabled()) {
+      try {
+        return await apiFetch<Produce>(`/api/produce/${id}`, {
+          method: "PATCH",
+          body: patch,
+        });
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    }
     const current = getAllProduce().find((p) => p.id === id);
     if (!current) return null;
     const updated: Produce = { ...current, ...patch, id: current.id };
@@ -166,6 +198,7 @@ export const produceService = {
 
 export const requirementsService = {
   async listRequirements(): Promise<Requirement[]> {
+    if (isApiEnabled()) return apiFetch<Requirement[]>("/api/requirements");
     return getAllRequirements();
   },
 
@@ -174,6 +207,23 @@ export const requirementsService = {
     buyerCompany: string,
     input: RequirementInput
   ): Promise<Requirement> {
+    if (isApiEnabled()) {
+      return apiFetch<Requirement>("/api/requirements", {
+        method: "POST",
+        body: {
+          produceName: input.produceName,
+          category: input.category,
+          grade: input.grade,
+          quantityKg: input.quantityKg,
+          unit: input.unit,
+          priceMinPerKg: input.priceMinPerKg,
+          priceMaxPerKg: input.priceMaxPerKg,
+          deliveryLocation: input.deliveryLocation,
+          deliveryDeadline: input.deliveryDeadline,
+          description: input.description,
+        },
+      });
+    }
     const created: Requirement = {
       id: `r-user-${Date.now()}`,
       buyerId,
@@ -215,6 +265,17 @@ export const requirementsService = {
     id: string,
     status: Requirement["status"]
   ): Promise<Requirement | null> {
+    if (isApiEnabled()) {
+      try {
+        return await apiFetch<Requirement>(`/api/requirements/${id}/status`, {
+          method: "PATCH",
+          body: { status },
+        });
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    }
     const current = getAllRequirements().find((r) => r.id === id);
     if (!current) return null;
     const updated: Requirement = { ...current, status };
@@ -231,6 +292,10 @@ export const requirementsService = {
 export const matchingService = {
   /** Deterministic weighted matcher (see utils/matching). Sorted best-first. */
   async findMatches(requirementId: string) {
+    if (isApiEnabled()) {
+      const params = new URLSearchParams({ requirementId });
+      return apiFetch<Match[]>(`/api/matches?${params.toString()}`);
+    }
     const req = getAllRequirements().find((r) => r.id === requirementId);
     if (!req) return [];
     return getAllProduce().filter((p) => p.name === req.produceName)
@@ -328,12 +393,32 @@ export function isValidOrderTransition(
   return ORDER_TRANSITIONS[from].includes(to);
 }
 
+/** Backend timeline notes may be null; the frontend contract uses undefined. */
+function normalizeOrder(o: Order): Order {
+  return {
+    ...o,
+    timeline: o.timeline.map((t) => ({ ...t, note: t.note ?? undefined })),
+  };
+}
+
 export const ordersService = {
   async listOrders(): Promise<Order[]> {
+    if (isApiEnabled()) {
+      const orders = await apiFetch<Order[]>("/api/orders");
+      return orders.map(normalizeOrder);
+    }
     return getAllOrders();
   },
 
   async getOrder(id: string): Promise<Order | null> {
+    if (isApiEnabled()) {
+      try {
+        return normalizeOrder(await apiFetch<Order>(`/api/orders/${id}`));
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    }
     return getAllOrders().find((o) => o.id === id) ?? null;
   },
 
@@ -343,6 +428,23 @@ export const ordersService = {
     buyerCompany: string,
     input: OrderInput
   ): Promise<Order> {
+    if (isApiEnabled()) {
+      return normalizeOrder(
+        await apiFetch<Order>("/api/orders", {
+          method: "POST",
+          body: {
+            matchId: input.matchId,
+            supplierId: input.supplierId,
+            produceName: input.produceName,
+            grade: input.grade,
+            quantityKg: input.quantityKg,
+            pricePerKg: input.pricePerKg,
+            deliveryLocation: input.deliveryLocation,
+            expectedDelivery: input.expectedDelivery,
+          },
+        })
+      );
+    }
     const seq = getAllOrders().length + 1046;
     const created: Order = {
       id: `ORD-${seq}`,
@@ -381,6 +483,20 @@ export const ordersService = {
     status: Order["status"],
     note?: string
   ): Promise<Order | null> {
+    if (isApiEnabled()) {
+      try {
+        return normalizeOrder(
+          await apiFetch<Order>(`/api/orders/${id}/transitions`, {
+            method: "POST",
+            body: { to: status, note },
+          })
+        );
+      } catch (e) {
+        // Matches demo semantics: missing/rejected transitions resolve null.
+        if (e instanceof ApiError && (e.status === 404 || e.status === 400)) return null;
+        throw e;
+      }
+    }
     const current = getAllOrders().find((o) => o.id === id);
     if (!current) return null;
     if (current.status === status) return current;
@@ -437,10 +553,16 @@ function readResponses(): SupplierResponse[] {
  */
 export const supplierResponseService = {
   async list(): Promise<SupplierResponse[]> {
+    if (isApiEnabled()) return apiFetch<SupplierResponse[]>("/api/supplier-responses");
     return readResponses();
   },
 
   async get(requirementId: string, supplierId: string): Promise<SupplierResponse | null> {
+    if (isApiEnabled()) {
+      const params = new URLSearchParams({ requirementId, supplierId });
+      const found = await apiFetch<SupplierResponse[]>(`/api/supplier-responses?${params.toString()}`);
+      return found[0] ?? null;
+    }
     return (
       readResponses().find(
         (r) => r.requirementId === requirementId && r.supplierId === supplierId
@@ -454,6 +576,12 @@ export const supplierResponseService = {
     supplierName: string,
     status: SupplierResponseStatus
   ): Promise<SupplierResponse> {
+    if (isApiEnabled()) {
+      return apiFetch<SupplierResponse>("/api/supplier-responses", {
+        method: "POST",
+        body: { requirementId, supplierId, status },
+      });
+    }
     const current = readResponses().filter(
       (r) => !(r.requirementId === requirementId && r.supplierId === supplierId)
     );
@@ -593,12 +721,16 @@ const SUPPLIER_REPLIES = [
 
 export const chatService = {
   async listConversations(): Promise<Conversation[]> {
+    if (isApiEnabled()) return apiFetch<Conversation[]>("/api/conversations");
     return [...readChat().conversations].sort((a, b) =>
       b.lastAt.localeCompare(a.lastAt)
     );
   },
 
   async listMessages(conversationId: string): Promise<Message[]> {
+    if (isApiEnabled()) {
+      return apiFetch<Message[]>(`/api/conversations/${conversationId}/messages`);
+    }
     return readChat()
       .messages.filter((m) => m.conversationId === conversationId)
       .sort((a, b) => a.sentAt.localeCompare(b.sentAt));
@@ -612,6 +744,12 @@ export const chatService = {
     supplierName: string,
     subject: string
   ): Promise<Conversation> {
+    if (isApiEnabled()) {
+      return apiFetch<Conversation>("/api/conversations", {
+        method: "POST",
+        body: { buyerId, buyerCompany, supplierId, supplierName, subject },
+      });
+    }
     const store = readChat();
     const existing = store.conversations.find(
       (c) => c.buyerId === buyerId && c.supplierId === supplierId
@@ -642,6 +780,19 @@ export const chatService = {
     senderName: string,
     text: string
   ): Promise<Message> {
+    if (isApiEnabled()) {
+      try {
+        return await apiFetch<Message>(`/api/conversations/${conversationId}/messages`, {
+          method: "POST",
+          body: { text },
+        });
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          throw new Error("Conversation not found.");
+        }
+        throw e;
+      }
+    }
     const store = readChat();
     const conv = store.conversations.find((c) => c.id === conversationId);
     if (!conv) throw new Error("Conversation not found.");
@@ -692,6 +843,8 @@ export const chatService = {
 
   /** Demo helper: deterministic supplier acknowledgement after buyer sends. */
   async demoSupplierReply(conversationId: string): Promise<Message | null> {
+    // API mode never fabricates replies; the other party's client sends them.
+    if (isApiEnabled()) return null;
     const store = readChat();
     const conv = store.conversations.find((c) => c.id === conversationId);
     if (!conv) return null;
@@ -724,6 +877,10 @@ export const chatService = {
   },
 
   async markBuyerRead(conversationId: string): Promise<void> {
+    if (isApiEnabled()) {
+      await apiFetch(`/api/conversations/${conversationId}/read`, { method: "POST" });
+      return;
+    }
     const store = readChat();
     writeChat({
       conversations: store.conversations.map((c) =>
@@ -737,6 +894,10 @@ export const chatService = {
 
   /** Supplier inbox counterpart (Request 4+ supplier UI). */
   async markSupplierRead(conversationId: string): Promise<void> {
+    if (isApiEnabled()) {
+      await apiFetch(`/api/conversations/${conversationId}/read`, { method: "POST" });
+      return;
+    }
     const store = readChat();
     writeChat({
       conversations: store.conversations.map((c) =>
@@ -804,21 +965,31 @@ export function notifyRole(
 
 export const notificationsService = {
   async list(): Promise<AppNotification[]> {
+    if (isApiEnabled()) return apiFetch<AppNotification[]>("/api/notifications");
     return readNotifications();
   },
 
   /** Bell feed: direct + role-broadcast items, newest first. */
   async listFor(userId: string, role: Role): Promise<AppNotification[]> {
+    if (isApiEnabled()) return apiFetch<AppNotification[]>("/api/notifications");
     return readNotifications()
       .filter((n) => n.userId === userId || (n.userId === "*" && n.audienceRole === role))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
 
   async unreadFor(userId: string, role: Role): Promise<number> {
+    if (isApiEnabled()) {
+      const res = await apiFetch<{ count: number }>("/api/notifications/unread");
+      return res.count;
+    }
     return (await notificationsService.listFor(userId, role)).filter((n) => !n.read).length;
   },
 
   async markAllRead(userId: string, role: Role): Promise<void> {
+    if (isApiEnabled()) {
+      await apiFetch("/api/notifications/read-all", { method: "POST" });
+      return;
+    }
     writeNotifications(
       readNotifications().map((n) =>
         n.userId === userId || (n.userId === "*" && n.audienceRole === role)

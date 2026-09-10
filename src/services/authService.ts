@@ -1,12 +1,11 @@
 import { DEMO_USERS } from "../data/demoData";
 import type { User } from "../types";
-
-const SESSION_KEY = "agripulse.session.v1";
+import { apiFetch, isApiEnabled } from "./apiClient";
+import { clearSession, readSession, writeSession } from "./session";
 
 /**
- * Frontend-only demo auth. Interface mirrors a future Spring Boot REST
- * client: swap internals with fetch('/api/auth/...') later without
- * changing callers.
+ * Demo auth by default; POST /api/auth/login when VITE_USE_API=true.
+ * Callers are unchanged - the AuthSession shape is identical either way.
  */
 export interface AuthSession {
   user: User;
@@ -21,6 +20,19 @@ function stripPassword(u: (typeof DEMO_USERS)[number]): User {
 
 export const authService = {
   async login(email: string, password: string): Promise<AuthSession> {
+    if (isApiEnabled()) {
+      const res = await apiFetch<{ user: User; token: string }>("/api/auth/login", {
+        method: "POST",
+        body: { email, password },
+      });
+      const session: AuthSession = {
+        user: res.user,
+        token: res.token,
+        loginAt: new Date().toISOString(),
+      };
+      writeSession(session);
+      return session;
+    }
     await new Promise((r) => setTimeout(r, 500)); // demo latency
     const found = DEMO_USERS.find(
       (u) => u.email.toLowerCase() === email.trim().toLowerCase()
@@ -33,22 +45,26 @@ export const authService = {
       token: `demo.${found.id}.${Date.now()}`,
       loginAt: new Date().toISOString(),
     };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    writeSession(session);
     return session;
   },
 
+  /** Fresh profile from the backend; demo mode returns the stored user. */
+  async me(): Promise<User> {
+    const session = readSession();
+    if (!session) throw new Error("Not signed in.");
+    if (!isApiEnabled()) return session.user;
+    const user = await apiFetch<User>("/api/users/me", { token: session.token });
+    writeSession({ ...session, user });
+    return user;
+  },
+
   logout(): void {
-    localStorage.removeItem(SESSION_KEY);
+    clearSession();
   },
 
   getSession(): AuthSession | null {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw) as AuthSession;
-    } catch {
-      return null;
-    }
+    return readSession();
   },
 
   getCurrentUser(): User | null {
